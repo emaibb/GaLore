@@ -3,7 +3,6 @@ from bitsandbytes.optim.optimizer import Optimizer2State
 import torch
 
 from .galore_projector import GaLoreProjector
-from .galore_projector_tensor import GaLoreProjectorTensor
 
 
 class AdamW8bit(Optimizer2State):
@@ -44,24 +43,26 @@ class AdamW8bit(Optimizer2State):
                     group['dim'] = 2
                     
                 # GaLore Projection
-                if "rank" in group:
-                    if "projector" not in state:
-                        if group['dim'] <= 2:
-                            state["projector"] = GaLoreProjector(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
+                if "projector" not in state:
+                    if group['dim'] == 2:
+                        if "rank" in group:
+                            state["projector"] = GaLoreProjector(group["rank"])
                         else:
-                            state["projector"] = GaLoreProjectorTensor(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
-                    if 'weight_decay' in group and group['weight_decay'] > 0:
-                        # ensure that the weight decay is not applied to the norm grad
-                        group['weight_decay_saved'] = group['weight_decay']
-                        group['weight_decay'] = 0
-                    
-                    grad = state["projector"].project(p.grad, state["step"])
-                    
-                    # suboptimal implementation
-                    p.saved_data = p.data.clone()
-                    p.data = grad.clone().to(p.data.dtype).to(p.data.device)
-                    p.data.zero_()
-                    p.grad = grad
+                            state["projector"] = GaLoreProjector()
+                    else:
+                        raise RuntimeError("GaLore only supports 2D tensors")
+                if 'weight_decay' in group and group['weight_decay'] > 0:
+                    # ensure that the weight decay is not applied to the norm grad
+                    group['weight_decay_saved'] = group['weight_decay']
+                    group['weight_decay'] = 0
+                
+                grad = state["projector"].project(p, state["step"])
+                
+                # suboptimal implementation
+                p.saved_data = p.data.clone()
+                p.data = grad.clone().to(p.data.dtype).to(p.data.device)
+                p.data.zero_()
+                p.grad = grad
 
                 if 'state1' not in state:
                     self.init_state(group, p, gindex, pindex)
@@ -71,14 +72,13 @@ class AdamW8bit(Optimizer2State):
                 torch.cuda.synchronize()
                 
                 # GaLore Projection Back
-                if "rank" in group:
-                    p.data = p.saved_data.add_(state["projector"].project_back(p.data))  
-                    
-                    # apply weight decay
-                    if 'weight_decay_saved' in group:
-                        p.data.add_(p.data, alpha=-group['lr'] * group['weight_decay_saved'])
-                        group['weight_decay'] = group['weight_decay_saved']
-                        del group['weight_decay_saved']
+                p.data = p.saved_data.add_(state["projector"].project_back(p.data))  
+                
+                # apply weight decay
+                if 'weight_decay_saved' in group:
+                    p.data.add_(p.data, alpha=-group['lr'] * group['weight_decay_saved'])
+                    group['weight_decay'] = group['weight_decay_saved']
+                    del group['weight_decay_saved']
                 
         if self.is_paged:
             # all paged operation are asynchronous, we need

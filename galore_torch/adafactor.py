@@ -9,7 +9,6 @@ from torch.optim import Optimizer
 from transformers.utils.versions import require_version
 
 from .galore_projector import GaLoreProjector
-from .galore_projector_tensor import GaLoreProjectorTensor
 
 
 class Adafactor(Optimizer):
@@ -190,14 +189,15 @@ class Adafactor(Optimizer):
                     group['dim'] = 2
                         
                 # GaLore Projection
-                if "rank" in group:
-                    if "projector" not in state:
-                        if group['dim'] <=2:
-                            state["projector"] = GaLoreProjector(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
+                if "projector" not in state:
+                    if group['dim'] ==2:
+                        if "rank" in group:
+                            state["projector"] = GaLoreProjector(group["rank"])
                         else:
-                            state["projector"] = GaLoreProjectorTensor(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
-                    
-                    grad = state["projector"].project(grad, state["step"])
+                            state["projector"] = GaLoreProjector()
+                    else:
+                        raise RuntimeError("GaLore only supports 2D tensors")
+                grad = state["projector"].project(p, state["step"])
 
                 grad_shape = grad.shape
 
@@ -260,8 +260,7 @@ class Adafactor(Optimizer):
                     update = exp_avg
                 
                 # GaLore Projection Back
-                if "rank" in group:
-                    update = state["projector"].project_back(update)
+                update = state["projector"].project_back(update)
     
                 if group["weight_decay"] != 0:
                     p_data_fp32.add_(p_data_fp32, alpha=(-group["weight_decay"] * lr))

@@ -10,8 +10,6 @@ from torch.optim import Optimizer
 from transformers.utils.versions import require_version
 
 from .galore_projector import GaLoreProjector
-from .galore_projector_tensor import GaLoreProjectorTensor
-
 
 class AdamW(Optimizer):
     """
@@ -93,13 +91,15 @@ class AdamW(Optimizer):
                     group['dim'] = 2
                     
                 # GaLore Projection
-                if "rank" in group:
-                    if "projector" not in state:
-                        if group['dim'] <=2:
-                            state["projector"] = GaLoreProjector(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
+                if "projector" not in state:
+                    if group['dim'] ==2:
+                        if "rank" in group:
+                            state["projector"] = GaLoreProjector(group["rank"])
                         else:
-                            state["projector"] = GaLoreProjectorTensor(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
-                    grad = state["projector"].project(grad, state["step"])
+                            state["projector"] = GaLoreProjector()
+                    else:
+                        raise RuntimeError("GaLore only supports 2D tensors")
+                grad = state["projector"].project(p, state["step"])
 
                 # State initialization
                 if "exp_avg" not in state:
@@ -129,8 +129,7 @@ class AdamW(Optimizer):
                 norm_grad = exp_avg / denom
                 
                 # GaLore Projection Back
-                if "rank" in group:
-                    norm_grad = state["projector"].project_back(norm_grad)
+                norm_grad = state["projector"].project_back(norm_grad)
                 
                 p.add_(norm_grad, alpha=-step_size)
 
